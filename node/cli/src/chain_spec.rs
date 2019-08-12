@@ -397,12 +397,24 @@ pub(crate) mod tests {
 	}
 
 	#[test]
-	fn council_techcommittee_different_genesis() {
-        use node_runtime::BuildStorage;
+	fn correct_council_genesis() {
+		use node_runtime::BuildStorage;
 		let c = development_config_genesis();
 		let mut s = c.build_storage().unwrap();
 		sr_io::with_storage(&mut s, || {
-			assert_ne!(node_runtime::TechnicalCommittee::members(), node_runtime::Council::members());
+			// Ensure Alice is the sole council member
+			assert_eq!(node_runtime::Council::members(), vec![get_from_seed::<AccountId>("Alice")]);
+		});
+	}
+
+	#[test]
+	fn correct_technical_committee_genesis() {
+		use node_runtime::BuildStorage;
+		let c = development_config_genesis();
+		let mut s = c.build_storage().unwrap();
+		sr_io::with_storage(&mut s, || {
+			// Ensure Bob is the sole technical committee member
+			assert_eq!(node_runtime::TechnicalCommittee::members(), vec![get_from_seed::<AccountId>("Bob")]);
 		});
 	}
 }
