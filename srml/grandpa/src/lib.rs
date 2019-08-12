@@ -36,6 +36,7 @@ use srml_support::{
 	decl_event, decl_storage, decl_module, dispatch::Result, storage::StorageValue,
 	traits::KeyOwnerProofSystem
 };
+use primitives::blake2_256;
 use app_crypto::RuntimeAppPublic;
 use sr_primitives::{
 	generic::{DigestItem, OpaqueDigestItemId}, key_types, KeyTypeId,
@@ -163,9 +164,11 @@ impl<T> ValidateUnsigned for Module<T> where T: Trait
 	type Call = Call<T>;
 
 	fn validate_unsigned(call: &Self::Call) -> TransactionValidity {
+		println!("@@@@ inside validate_unsigned");
 		match call {
 			Call::report_equivocation(equivocation, proof, signature)
 				if equivocation_is_valid::<T::Hash, T::BlockNumber>(equivocation, proof, signature) => {
+					println!("@@@@ is valid tx");
 					return TransactionValidity::Valid(
 						ValidTransaction {
 							priority: 0,
@@ -176,7 +179,10 @@ impl<T> ValidateUnsigned for Module<T> where T: Trait
 						}
 					)
 			},
-			_ => TransactionValidity::Invalid(0),
+			_ => {
+				println!("@@@@ returning invalid from validate_unsigned");
+				TransactionValidity::Invalid(0)
+			},
 		}
 	}
 }
@@ -186,17 +192,20 @@ fn equivocation_is_valid<H: Codec + PartialEq, N: Codec + PartialEq>(
 	proof: &Proof,
 	signature: &AuthoritySignature
 ) -> bool {
-
+	println!("@@@@ checking equivocation grandpa");
 	let signed = (equivocation, proof);
 	let reporter = &equivocation.reporter;
 
-	let signature_valid = signed.using_encoded(|signed| {
+	let signature_valid = signed.using_encoded(|signed| if signed.len() > 256 {
+		reporter.verify(&blake2_256(signed), &signature)
+	} else {
 		reporter.verify(&signed, &signature)
 	});
 
 	if !signature_valid {
 		return false
 	}
+	println!("@@@ reporter signature is ok");
 
 	let first_vote = &equivocation.first.0;
 	let first_signature = &equivocation.first.1;
@@ -206,7 +215,7 @@ fn equivocation_is_valid<H: Codec + PartialEq, N: Codec + PartialEq>(
 
 	let identity = &equivocation.identity;
 
-	if first_vote != second_vote {
+	if first_vote == second_vote {
 		let first_payload = localized_payload(
 			equivocation.round_number,
 			equivocation.set_id,
@@ -216,6 +225,7 @@ fn equivocation_is_valid<H: Codec + PartialEq, N: Codec + PartialEq>(
 		if !identity.verify(&first_payload, &first_signature) {
 			return false
 		}
+		println!("@@@@ header 1 signature is ok");
 
 		let second_payload = localized_payload(
 			equivocation.round_number,
@@ -226,6 +236,7 @@ fn equivocation_is_valid<H: Codec + PartialEq, N: Codec + PartialEq>(
 		if !identity.verify(&second_payload, &second_signature) {
 			return false
 		}
+		println!("@@@@ header 2 signature is ok");
 
 		return true
 	}
@@ -239,19 +250,19 @@ decl_module! {
 
 		/// Report some misbehavior.
 		fn report_equivocation(
-			origin,
-			equivocation: GrandpaEquivocation<T::Hash, T::BlockNumber>,
-			proof: Proof,
+			_origin,
+			_equivocation: GrandpaEquivocation<T::Hash, T::BlockNumber>,
+			_proof: Proof,
 			_signature: AuthoritySignature
 		) {
-			let _who = ensure_signed(origin)?;
-			let to_punish = <T as Trait>::KeyOwnerSystem::check_proof(
-				(key_types::SR25519, equivocation.identity.encode()),
-				proof.clone(),
-			);
-			if to_punish.is_some() {
-				// TODO: Slash.
-			}
+			// let _who = ensure_signed(origin)?;
+			// let to_punish = <T as Trait>::KeyOwnerSystem::check_proof(
+			// 	(key_types::SR25519, equivocation.identity.encode()),
+			// 	proof.clone(),
+			// );
+			// if to_punish.is_some() {
+			// 	// TODO: Slash.
+			// }
 		}
 
 		fn on_finalize(block_number: T::BlockNumber) {

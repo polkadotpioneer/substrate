@@ -52,7 +52,7 @@ use version::RuntimeVersion;
 use elections::VoteIndex;
 #[cfg(any(feature = "std", test))]
 use version::NativeVersion;
-use primitives::OpaqueMetadata;
+use primitives::{OpaqueMetadata, blake2_256};
 use grandpa::{AuthorityId as GrandpaId, AuthorityWeight as GrandpaWeight};
 use im_online::{AuthorityId as ImOnlineId};
 use finality_tracker::{DEFAULT_REPORT_LATENCY, DEFAULT_WINDOW_SIZE};
@@ -431,7 +431,7 @@ construct_runtime!(
 		UncheckedExtrinsic = UncheckedExtrinsic
 	{
 		System: system::{Module, Call, Storage, Config, Event},
-		Babe: babe::{Module, Call, Storage, Config, Inherent(Timestamp)},
+		Babe: babe::{Module, Call, Storage, Config, Inherent(Timestamp), ValidateUnsigned},
 		Timestamp: timestamp::{Module, Call, Storage, Inherent},
 		Authorship: authorship::{Module, Call, Storage, Inherent},
 		Indices: indices,
@@ -445,7 +445,7 @@ construct_runtime!(
 		Elections: elections::{Module, Call, Storage, Event<T>, Config<T>},
 		TechnicalMembership: membership::<Instance1>::{Module, Call, Storage, Event<T>, Config<T>},
 		FinalityTracker: finality_tracker::{Module, Call, Inherent},
-		Grandpa: grandpa::{Module, Call, Storage, Config, Event},
+		Grandpa: grandpa::{Module, Call, Storage, Config, Event, ValidateUnsigned},
 		Treasury: treasury::{Module, Call, Storage, Event<T>},
 		Contracts: contracts,
 		Sudo: sudo,
@@ -553,13 +553,20 @@ impl_runtime_apis! {
 		fn construct_equivocation_transaction(
 			equivocation: GrandpaEquivocationFrom<Block>
 		) -> Option<Vec<u8>> {
-			let proof = Historical::prove((key_types::SR25519, equivocation.identity.encode()))?;
-			let signing = (equivocation.clone(), proof.clone());
+			let proof = Historical::prove((key_types::GRANDPA, equivocation.identity.encode()))?;
 			let reporter = &equivocation.reporter;
-			let signature = reporter.sign(&signing.encode()).expect("FIXME");
+			let to_sign = (equivocation.clone(), proof.clone());
+
+			let signature = to_sign.using_encoded(|payload| if payload.len() > 256 {
+				reporter.sign(&blake2_256(payload))
+			} else {
+				reporter.sign(&payload)
+			}).expect("FIXME");
+
 			let grandpa_call = GrandpaCall::report_equivocation(equivocation, proof, signature);
 			let call = Call::Grandpa(grandpa_call);
 			let ex = UncheckedExtrinsic::new_unsigned(call.into());
+
 			Some(ex.encode())
 		}
 	}
@@ -591,13 +598,20 @@ impl_runtime_apis! {
 		fn construct_equivocation_transaction(
 			equivocation: BabeEquivocationProof<<Block as BlockT>::Header>,
 		) -> Option<Vec<u8>> {
-			let proof = Historical::prove((key_types::SR25519, equivocation.identity().encode()))?;
+			let proof = Historical::prove((key_types::BABE, equivocation.identity().encode()))?;
 			let reporter = equivocation.reporter();
-			let signature = reporter.sign(&(equivocation.clone(), proof.clone()).encode())
-				.expect("FIXME");
+			let to_sign = (equivocation.clone(), proof.clone());
+			
+			let signature = to_sign.using_encoded(|payload| if payload.len() > 256 {
+				reporter.sign(&blake2_256(payload))
+			} else {
+				reporter.sign(&payload)
+			}).expect("FIXME");
+			
 			let babe_call = BabeCall::report_equivocation(equivocation, proof, signature);
 			let call = Call::Babe(babe_call);
 			let ex = UncheckedExtrinsic::new_unsigned(call.into());
+			
 			Some(ex.encode())
 		}
 	}
