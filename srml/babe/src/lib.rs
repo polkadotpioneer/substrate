@@ -24,12 +24,16 @@ pub use timestamp;
 use rstd::{result, prelude::*};
 use srml_support::{
 	decl_storage, decl_module, StorageValue, StorageMap,
-	traits::{FindAuthor, Get, KeyOwnerProofSystem}
+	traits::{FindAuthor, Get, KeyOwnerProofSystem},
 };
 use timestamp::{OnTimestampSet};
-use sr_primitives::{generic::DigestItem, ConsensusEngineId, key_types, KeyTypeId};
+use sr_primitives::{
+	generic::DigestItem, ConsensusEngineId, key_types, KeyTypeId,
+	transaction_validity::{TransactionValidity, ValidTransaction},
+};
 use sr_primitives::traits::{
-	IsMember, SaturatedConversion, Saturating, RandomnessBeacon, Convert, Header
+	IsMember, SaturatedConversion, Saturating, RandomnessBeacon, Convert, Header,
+	ValidateUnsigned
 };
 #[cfg(feature = "std")]
 use timestamp::TimestampInherentData;
@@ -178,7 +182,32 @@ decl_storage! {
 	}
 }
 
-fn equivocation_is_valid<T: Trait>(equivocation: BabeEquivocationProof<T::Header>) -> bool {
+impl<T> ValidateUnsigned for Module<T> where T: Trait 
+{
+	type Call = Call<T>;
+
+	fn validate_unsigned(call: &Self::Call) -> TransactionValidity {
+		match call {
+			Call::report_equivocation(equivocation, _proof)
+				if equivocation_is_valid::<T>(equivocation) => {
+					return TransactionValidity::Valid(
+						ValidTransaction {
+							priority: 0,
+							requires: vec![],
+							provides: vec![],
+							longevity: 18446744073709551615,
+							propagate: true,
+						}
+					)
+			},
+			_ => TransactionValidity::Invalid(0),
+		}
+	}
+}
+
+fn equivocation_is_valid<T: Trait>(
+	equivocation: &BabeEquivocationProof<T::Header>,
+) -> bool {
 	let first_header = equivocation.first_header();
 	let second_header = equivocation.second_header();
 
@@ -250,12 +279,15 @@ decl_module! {
 		fn report_equivocation(
 			origin,
 			equivocation: BabeEquivocationProof<T::Header>,
-			_proof: Proof
+			proof: Proof
 		) {
 			let _who = ensure_signed(origin)?;
-			
-			if equivocation_is_valid::<T>(equivocation) {
-				// TODO: Slash `to_punish` and reward `who`.
+			let to_punish = <T as Trait>::KeyOwnerSystem::check_proof(
+				(key_types::SR25519, equivocation.identity().encode()),
+				proof.clone(),
+			);
+			if to_punish.is_some() {
+				// TODO: Slash.
 			}
 		}
 	}
